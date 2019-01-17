@@ -7,16 +7,6 @@ var fs = require('fs'),
     handlebars = require('handlebars').create(),
     annotator = require('./annotator'),
     helpers = require('./helpers'),
-    templateFor = function(name) {
-        return handlebars.compile(
-            fs.readFileSync(
-                path.resolve(__dirname, 'templates', name + '.txt'),
-                'utf8'
-            )
-        );
-    },
-    headerTemplate = templateFor('head'),
-    footerTemplate = templateFor('foot'),
     detailTemplate = handlebars.compile(
         [
             '<tr>',
@@ -153,6 +143,7 @@ function HtmlReport(opts) {
     this.subdir = opts.subdir || '';
     this.date = Date();
     this.skipEmpty = opts.skipEmpty;
+    this.templates = path.resolve(opts.template || path.resolve(__dirname, 'templates'));
 }
 
 HtmlReport.prototype.getTemplateData = function() {
@@ -214,7 +205,7 @@ HtmlReport.prototype.onSummary = function(node, context) {
 
     fillTemplate(node, templateData, linkMapper, context);
     cw = this.getWriter(context).writeFile(linkMapper.getPath(node));
-    cw.write(headerTemplate(templateData));
+    cw.write(this.headerTemplate(templateData));
     cw.write(summaryTableHeader);
     children.forEach(function(child) {
         var metrics = child.getCoverageSummary(),
@@ -251,7 +242,7 @@ HtmlReport.prototype.onSummary = function(node, context) {
         cw.write(summaryLineTemplate(data) + '\n');
     });
     cw.write(summaryTableFooter);
-    cw.write(footerTemplate(templateData));
+    cw.write(this.footerTemplate(templateData));
     cw.close();
 };
 
@@ -262,7 +253,7 @@ HtmlReport.prototype.onDetail = function(node, context) {
 
     fillTemplate(node, templateData, linkMapper, context);
     cw = this.getWriter(context).writeFile(linkMapper.getPath(node));
-    cw.write(headerTemplate(templateData));
+    cw.write(this.headerTemplate(templateData));
     cw.write('<pre><table class="coverage">\n');
     cw.write(
         detailTemplate(
@@ -270,8 +261,21 @@ HtmlReport.prototype.onDetail = function(node, context) {
         )
     );
     cw.write('</table></pre>\n');
-    cw.write(footerTemplate(templateData));
+    cw.write(this.footerTemplate(templateData));
     cw.close();
 };
+
+HtmlReport.prototype.templateFor = function(name) {
+    return handlebars.compile(
+        fs.readFileSync(
+            path.resolve(this.templates, name + '.txt'),
+            'utf8'
+        )
+    );
+};
+
+Object.defineProperty(HtmlReport.prototype, "headerTemplate", { get: function() { return this.headerTemplate = this.templateFor('head'); } }),
+
+Object.defineProperty(HtmlReport.prototype, "footerTemplate", { get: function() { return this.footerTemplate = this.templateFor('foot'); } }),
 
 module.exports = HtmlReport;
