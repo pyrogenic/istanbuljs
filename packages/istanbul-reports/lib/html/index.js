@@ -131,7 +131,7 @@ function HtmlReport(opts) {
     this.linkMapper = opts.linkMapper || standardLinkMapper;
     this.subdir = opts.subdir || '';
     this.date = Date();
-    this.templates = path.resolve(opts.template || path.resolve(__dirname, 'templates'));
+    this.templates = path.resolve(opts.templates || path.resolve(__dirname, 'templates'));
 }
 
 HtmlReport.prototype.getTemplateData = function () {
@@ -216,17 +216,29 @@ HtmlReport.prototype.onDetail = function (node, context) {
     cw.close();
 };
 
-HtmlReport.prototype.templateFor = function(name) {
-    return handlebars.compile(
-        fs.readFileSync(
-            path.resolve(this.templates, name + '.txt'),
-            'utf8'
-        )
-    );
+HtmlReport.prototype.templateFor = function (name) {
+  var file = path.resolve(this.templates, name + '.txt');
+  return handlebars.compile(
+    fs.readFileSync(file, 'utf8')
+  );
 };
 
-Object.defineProperty(HtmlReport.prototype, "headerTemplate", { get: function() { return this.headerTemplate = this.templateFor('head'); } }),
+Object.defineProperty(HtmlReport.prototype, "headerTemplate", {
+  get: function () {
+    if (this.headerTemplateValue !== undefined) {
+      return this.headerTemplateValue;
+    }
+    return this.headerTemplateValue = this.templateFor('head');
+  }
+});
 
-Object.defineProperty(HtmlReport.prototype, "footerTemplate", { get: function() { return this.footerTemplate = this.templateFor('foot'); } }),
+Object.defineProperty(HtmlReport.prototype, "footerTemplate", {
+  get: function () {
+    if (this.footerTemplateValue !== undefined) {
+      return this.footerTemplateValue;
+    }
+    return this.footerTemplateValue = this.templateFor('foot');
+  }
+});
 
 module.exports = HtmlReport;
