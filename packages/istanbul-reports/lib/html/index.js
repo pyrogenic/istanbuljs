@@ -228,7 +228,7 @@ Object.defineProperty(HtmlReport.prototype, "headerTemplate", {
     if (this.headerTemplateValue !== undefined) {
       return this.headerTemplateValue;
     }
-    return this.headerTemplateValue = this.templateFor('head');
+    return (this.headerTemplateValue = this.templateFor('head'));
   }
 });
 
@@ -237,7 +237,7 @@ Object.defineProperty(HtmlReport.prototype, "footerTemplate", {
     if (this.footerTemplateValue !== undefined) {
       return this.footerTemplateValue;
     }
-    return this.footerTemplateValue = this.templateFor('foot');
+    return (this.footerTemplateValue = this.templateFor('foot'));
   }
 });
 
