@@ -1,3 +1,4 @@
+import { defaults } from '@istanbuljs/schema';
 import Instrumenter from './instrumenter';
 import programVisitor from './visitor';
 import readInitialCoverage from './read-coverage';
@@ -12,6 +13,8 @@ function createInstrumenter(opts) {
     return new Instrumenter(opts);
 }
 
-export {createInstrumenter};
-export {programVisitor};
-export {readInitialCoverage};
+export { createInstrumenter };
+export { programVisitor };
+export { readInitialCoverage };
+
+export const defaultOpts = defaults.instrumenter;

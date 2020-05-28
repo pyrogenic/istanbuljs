@@ -1,80 +1,94 @@
+'use strict';
 /* globals describe, it */
-var assert = require('chai').assert,
-    isWindows = require('is-windows'),
-    createMap = require('istanbul-lib-coverage').createCoverageMap,
-    SMC = require('source-map').SourceMapConsumer,
-    createTransformer = require('../lib/transformer').create;
+const path = require('path');
+const assert = require('chai').assert;
+const createMap = require('istanbul-lib-coverage').createCoverageMap;
+const { SourceMapConsumer } = require('source-map');
+const { SourceMapTransformer } = require('../lib/transformer');
 
-function createData() {
-    var sourceMap = {
-        "version": 3,
-        "sources": [
-            "file.js"
-        ],
-        "mappings": ";AAAa,mBAAW,GAAG,MAAM,CAAC;AACrB,kBAAU,GAAG,yBAAyB,CAAC"
-    };
+const coverageData = {
+    statementMap: {
+        '0': {
+            start: { line: 2, column: 0 },
+            end: { line: 2, column: 29 }
+        },
+        '1': {
+            start: { line: 3, column: 0 },
+            end: { line: 3, column: 47 }
+        }
+    },
+    fnMap: {},
+    branchMap: {},
+    s: {
+        '0': 0,
+        '1': 0,
+        '2': 0
+    },
+    f: {},
+    b: {}
+};
 
-    var coverageData = {
-        "path": "/path/to/file.js",
-        "statementMap": {
-            "0": {
-                "start": {
-                    "line": 2,
-                    "column": 0
+const sourceFileSlash = path.posix.normalize('/path/to/file.js');
+const sourceFileBackslash = path.win32.normalize('/path/to/file.js');
+
+const testDataSlash = {
+    sourceMap: {
+        version: 3,
+        sources: [sourceFileSlash],
+        mappings: ';AAAa,mBAAW,GAAG,MAAM,CAAC;AACrB,kBAAU,GAAG,yBAAyB,CAAC'
+    },
+    coverageData: {
+        ...coverageData,
+        path: sourceFileSlash
+    }
+};
+
+const testDataBackslash = {
+    coverageData: {
+        ...coverageData,
+        path: sourceFileBackslash
+    }
+};
+
+describe('transformer', () => {
+    it('maps statement locations', async () => {
+        const coverageMap = createMap({});
+        coverageMap.addFileCoverage(testDataSlash.coverageData);
+
+        const transformer = new SourceMapTransformer(
+            () => new SourceMapConsumer(testDataSlash.sourceMap)
+        );
+        const mapped = await transformer.transform(coverageMap);
+
+        assert.deepEqual(
+            mapped.data[testDataSlash.coverageData.path].statementMap,
+            {
+                '0': {
+                    start: { line: 1, column: 13 },
+                    end: { line: 1, column: 34 }
                 },
-                "end": {
-                    "line": 2,
-                    "column": 29
-                }
-            },
-            "1": {
-                "start": {
-                    "line": 3,
-                    "column": 0
-                },
-                "end": {
-                    "line": 3,
-                    "column": 47
+                '1': {
+                    start: { line: 2, column: 13 },
+                    end: { line: 2, column: 52 }
                 }
             }
-        },
-        "fnMap": {},
-        "branchMap": {},
-        "s": {
-            "0": 0,
-            "1": 0,
-            "2": 0
-        },
-        "f": {},
-        "b": {}
-    };
+        );
+    });
 
-    return {
-        sourceMap: sourceMap,
-        coverageData: coverageData
-    };
-}
+    it('maps each file only once, /path/to/file.js and \\path\\to\\file.js are the same file', async () => {
+        const coverageMap = createMap({});
 
-describe('transformer', function () {
-    it('maps statement locations', function () {
-        if (isWindows()) {
-            return this.skip();
-        }
+        coverageMap.addFileCoverage(testDataSlash.coverageData);
+        coverageMap.addFileCoverage(testDataBackslash.coverageData);
 
-        var coverageMap = createMap({}),
-            testData = createData(),
-            coverageData = testData.coverageData,
-            sourceMap = testData.sourceMap;
+        const transformer = new SourceMapTransformer(file =>
+            file === testDataSlash.coverageData.path
+                ? new SourceMapConsumer(testDataSlash.sourceMap)
+                : undefined
+        );
+        const mapped = await transformer.transform(coverageMap);
 
-        coverageMap.addFileCoverage(coverageData);
-        var mapped = createTransformer(function() {
-            return new SMC(sourceMap);
-        }).transform(coverageMap);
-
-        assert.deepEqual(mapped.data[coverageData.path].statementMap, {
-            '0': { start: { line: 1, column: 13 }, end: { line: 1, column: 34 } },
-            '1': { start: { line: 2, column: 13 }, end: { line: 2, column: 52 } }
-        });
+        assert.equal(Object.keys(mapped.data).length, 1);
+        assert.isDefined(mapped.data[testDataBackslash.coverageData.path]);
     });
 });
-

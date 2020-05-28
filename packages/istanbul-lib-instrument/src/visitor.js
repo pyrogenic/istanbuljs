@@ -1,18 +1,19 @@
-import {SourceCoverage} from './source-coverage';
+import { createHash } from 'crypto';
+import { template } from '@babel/core';
+import { defaults } from '@istanbuljs/schema';
+import { SourceCoverage } from './source-coverage';
 import { SHA, MAGIC_KEY, MAGIC_VALUE } from './constants';
-import {createHash} from 'crypto';
-import template from 'babel-template';
 
-// istanbul ignore comment pattern
+// pattern for istanbul to ignore a section
 const COMMENT_RE = /^\s*istanbul\s+ignore\s+(if|else|next)(?=\W|$)/;
-// istanbul ignore file pattern
+// pattern for istanbul to ignore the whole file
 const COMMENT_FILE_RE = /^\s*istanbul\s+ignore\s+(file)(?=\W|$)/;
 // source map URL pattern
 const SOURCE_MAP_RE = /[#@]\s*sourceMappingURL=(.*)\s*$/m;
 
 // generate a variable name from hashing the supplied file path
 function genVar(filename) {
-    var hash = createHash(SHA);
+    const hash = createHash(SHA);
     hash.update(filename);
     return 'cov_' + parseInt(hash.digest('hex').substr(0, 12), 16).toString(36);
 }
@@ -20,15 +21,21 @@ function genVar(filename) {
 // VisitState holds the state of the visitor, provides helper functions
 // and is the `this` for the individual coverage visitors.
 class VisitState {
-    constructor(types, sourceFilePath, inputSourceMap) {
+    constructor(
+        types,
+        sourceFilePath,
+        inputSourceMap,
+        ignoreClassMethods = []
+    ) {
         this.varName = genVar(sourceFilePath);
         this.attrs = {};
         this.nextIgnore = null;
         this.cov = new SourceCoverage(sourceFilePath);
 
-        if (typeof (inputSourceMap) !== "undefined") {
+        if (typeof inputSourceMap !== 'undefined') {
             this.cov.inputSourceMap(inputSourceMap);
         }
+        this.ignoreClassMethods = ignoreClassMethods;
         this.types = types;
         this.sourceMappingURL = null;
     }
@@ -43,8 +50,10 @@ class VisitState {
     hintFor(node) {
         let hint = null;
         if (node.leadingComments) {
-            node.leadingComments.forEach(function (c) {
-                const v = (c.value || /* istanbul ignore next: paranoid check */ "").trim();
+            node.leadingComments.forEach(c => {
+                const v = (
+                    c.value || /* istanbul ignore next: paranoid check */ ''
+                ).trim();
                 const groups = v.match(COMMENT_RE);
                 if (groups) {
                     hint = groups[1];
@@ -56,16 +65,17 @@ class VisitState {
 
     // extract a source map URL from comments and keep track of it
     maybeAssignSourceMapURL(node) {
-        const that = this;
-        const extractURL = (comments) => {
+        const extractURL = comments => {
             if (!comments) {
                 return;
             }
-            comments.forEach(function (c) {
-                const v = (c.value || /* istanbul ignore next: paranoid check */ "").trim();
+            comments.forEach(c => {
+                const v = (
+                    c.value || /* istanbul ignore next: paranoid check */ ''
+                ).trim();
                 const groups = v.match(SOURCE_MAP_RE);
                 if (groups) {
-                    that.sourceMappingURL = groups[1];
+                    this.sourceMappingURL = groups[1];
                 }
             });
         };
@@ -76,7 +86,11 @@ class VisitState {
     // for these expressions the statement counter needs to be hoisted, so
     // function name inference can be preserved
     counterNeedsHoisting(path) {
-      return path.isFunctionExpression() || path.isArrowFunctionExpression() || path.isClassExpression();
+        return (
+            path.isFunctionExpression() ||
+            path.isArrowFunctionExpression() ||
+            path.isClassExpression()
+        );
     }
 
     // all the generic stuff that needs to be done on enter for every node
@@ -99,6 +113,24 @@ class VisitState {
         if (this.getAttr(path.node, 'skip-all') !== null) {
             this.nextIgnore = n;
         }
+
+        // else check for ignored class methods
+        if (
+            path.isFunctionExpression() &&
+            this.ignoreClassMethods.some(
+                name => path.node.id && name === path.node.id.name
+            )
+        ) {
+            this.nextIgnore = n;
+            return;
+        }
+        if (
+            path.isClassMethod() &&
+            this.ignoreClassMethods.some(name => name === path.node.key.name)
+        ) {
+            this.nextIgnore = n;
+            return;
+        }
     }
 
     // all the generic stuff on exit of a node,
@@ -109,7 +141,7 @@ class VisitState {
             this.nextIgnore = null;
         }
         // nuke all attributes for the node
-        delete(path.node.__cov__);
+        delete path.node.__cov__;
     }
 
     // set a node attribute for the supplied node
@@ -130,15 +162,19 @@ class VisitState {
     //
     increase(type, id, index) {
         const T = this.types;
-        const wrap = (index !== null
-                // If `index` present, turn `x` into `x[index]`.
-                ? (x) => T.memberExpression(x, T.numericLiteral(index), true)
-                : (x) => x
-        );
-        return T.updateExpression('++',
+        const wrap =
+            index !== null
+                ? // If `index` present, turn `x` into `x[index]`.
+                  x => T.memberExpression(x, T.numericLiteral(index), true)
+                : x => x;
+        return T.updateExpression(
+            '++',
             wrap(
                 T.memberExpression(
-                    T.memberExpression(T.identifier(this.varName), T.identifier(type)),
+                    T.memberExpression(
+                        T.callExpression(T.identifier(this.varName), []),
+                        T.identifier(type)
+                    ),
                     T.numericLiteral(id),
                     true
                 )
@@ -152,23 +188,35 @@ class VisitState {
             path.node.body.unshift(T.expressionStatement(increment));
         } else if (path.isStatement()) {
             path.insertBefore(T.expressionStatement(increment));
-        } else if (this.counterNeedsHoisting(path) && T.isVariableDeclarator(path.parentPath)) {
+        } else if (
+            this.counterNeedsHoisting(path) &&
+            T.isVariableDeclarator(path.parentPath)
+        ) {
             // make an attempt to hoist the statement counter, so that
             // function names are maintained.
             const parent = path.parentPath.parentPath;
             if (parent && T.isExportNamedDeclaration(parent.parentPath)) {
-                parent.parentPath.insertBefore(T.expressionStatement(increment));
-            } else if (parent && (T.isProgram(parent.parentPath) || T.isBlockStatement(parent.parentPath))) {
-                parent.insertBefore(T.expressionStatement(
-                    increment
-                ));
+                parent.parentPath.insertBefore(
+                    T.expressionStatement(increment)
+                );
+            } else if (
+                parent &&
+                (T.isProgram(parent.parentPath) ||
+                    T.isBlockStatement(parent.parentPath))
+            ) {
+                parent.insertBefore(T.expressionStatement(increment));
             } else {
                 path.replaceWith(T.sequenceExpression([increment, path.node]));
             }
-        } else /* istanbul ignore else: not expected */ if (path.isExpression()) {
+        } /* istanbul ignore else: not expected */ else if (
+            path.isExpression()
+        ) {
             path.replaceWith(T.sequenceExpression([increment, path.node]));
         } else {
-            console.error('Unable to insert counter for node type:', path.node.type);
+            console.error(
+                'Unable to insert counter for node type:',
+                path.node.type
+            );
         }
     }
 
@@ -193,13 +241,13 @@ class VisitState {
         let dloc = null;
         // get location for declaration
         switch (n.type) {
-            case "FunctionDeclaration":
+            case 'FunctionDeclaration':
                 /* istanbul ignore else: paranoid check */
                 if (n.id) {
                     dloc = n.id.loc;
                 }
                 break;
-            case "FunctionExpression":
+            case 'FunctionExpression':
                 if (n.id) {
                     dloc = n.id.loc;
                 }
@@ -220,7 +268,10 @@ class VisitState {
         if (body.isBlockStatement()) {
             body.node.body.unshift(T.expressionStatement(increment));
         } else {
-            console.error('Unable to process function body node type:', path.node.type);
+            console.error(
+                'Unable to process function body node type:',
+                path.node.type
+            );
         }
     }
 
@@ -230,7 +281,10 @@ class VisitState {
     }
 
     insertBranchCounter(path, branchName, loc) {
-        const increment = this.getBranchIncrement(branchName, loc || path.node.loc);
+        const increment = this.getBranchIncrement(
+            branchName,
+            loc || path.node.loc
+        );
         this.insertCounter(path, increment);
     }
 
@@ -238,7 +292,7 @@ class VisitState {
         if (!node) {
             return;
         }
-        if (node.type === "LogicalExpression") {
+        if (node.type === 'LogicalExpression') {
             const hint = this.hintFor(node);
             if (hint !== 'next') {
                 this.findLeaves(node.left, accumulator, node, 'left');
@@ -246,9 +300,9 @@ class VisitState {
             }
         } else {
             accumulator.push({
-                node: node,
-                parent: parent,
-                property: property
+                node,
+                parent,
+                property
             });
         }
     }
@@ -263,25 +317,23 @@ class VisitState {
 //   This relieves them from worrying about ignore states and generated nodes.
 // * standard exit processing is done
 //
-function entries() {
-    const enter = Array.prototype.slice.call(arguments);
+function entries(...enter) {
     // the enter function
-    const wrappedEntry = function (path, node) {
+    const wrappedEntry = function(path, node) {
         this.onEnter(path);
         if (this.shouldIgnore(path)) {
             return;
         }
-        const that = this;
-        enter.forEach(function (e) {
-            e.call(that, path, node);
+        enter.forEach(e => {
+            e.call(this, path, node);
         });
     };
-    const exit = function (path, node) {
+    const exit = function(path, node) {
         this.onExit(path, node);
     };
     return {
         enter: wrappedEntry,
-        exit: exit
+        exit
     };
 }
 
@@ -304,10 +356,8 @@ function coverVariableDeclarator(path) {
     this.insertStatementCounter(path.get('init'));
 }
 
-function skipInit(path) {
-    if (path.node.init) {
-        this.setAttr(path.node.init, 'skip-all', true);
-    }
+function coverClassPropDeclarator(path) {
+    this.insertStatementCounter(path.get('value'));
 }
 
 function makeBlock(path) {
@@ -318,25 +368,27 @@ function makeBlock(path) {
     if (!path.isBlockStatement()) {
         path.replaceWith(T.blockStatement([path.node]));
         path.node.loc = path.node.body[0].loc;
+        path.node.body[0].leadingComments = path.node.leadingComments;
+        path.node.leadingComments = undefined;
     }
 }
 
 function blockProp(prop) {
-    return function (path) {
+    return function(path) {
         makeBlock.call(this, path.get(prop));
     };
 }
 
-function makeParenthesizedExpression(path) {
-  var T = this.types;
-  if (path.node) {
-    path.replaceWith(T.parenthesizedExpression(path.node));
-  }
+function makeParenthesizedExpressionForNonIdentifier(path) {
+    const T = this.types;
+    if (path.node && !path.isIdentifier()) {
+        path.replaceWith(T.parenthesizedExpression(path.node));
+    }
 }
 
 function parenthesizedExpressionProp(prop) {
-    return function (path) {
-        makeParenthesizedExpression.call(this, path.get(prop));
+    return function(path) {
+        makeParenthesizedExpressionForNonIdentifier.call(this, path.get(prop));
     };
 }
 
@@ -346,13 +398,9 @@ function convertArrowExpression(path) {
     if (!T.isBlockStatement(n.body)) {
         const bloc = n.body.loc;
         if (n.expression === true) {
-          n.expression = false;
+            n.expression = false;
         }
-        n.body = T.blockStatement([
-            T.returnStatement(
-                n.body
-            )
-        ]);
+        n.body = T.blockStatement([T.returnStatement(n.body)]);
         // restore body location
         n.body.loc = bloc;
         // set up the location for the return statement so it gets
@@ -362,11 +410,11 @@ function convertArrowExpression(path) {
 }
 
 function coverIfBranches(path) {
-    const n = path.node,
-        hint = this.hintFor(n),
-        ignoreIf = hint === 'if',
-        ignoreElse = hint === 'else',
-        branch = this.cov.newBranch('if', n.loc);
+    const n = path.node;
+    const hint = this.hintFor(n);
+    const ignoreIf = hint === 'if';
+    const ignoreElse = hint === 'else';
+    const branch = this.cov.newBranch('if', n.loc);
 
     if (ignoreIf) {
         this.setAttr(n.consequent, 'skip-all', true);
@@ -397,10 +445,10 @@ function coverSwitchCase(path) {
 }
 
 function coverTernary(path) {
-    const n = path.node,
-        branch = this.cov.newBranch('cond-expr', path.node.loc),
-        cHint = this.hintFor(n.consequent),
-        aHint = this.hintFor(n.alternate);
+    const n = path.node;
+    const branch = this.cov.newBranch('cond-expr', path.node.loc);
+    const cHint = this.hintFor(n.consequent);
+    const aHint = this.hintFor(n.alternate);
 
     if (cHint !== 'next') {
         this.insertBranchCounter(path.get('consequent'), branch);
@@ -410,15 +458,14 @@ function coverTernary(path) {
     }
 }
 
-
 function coverLogicalExpression(path) {
     const T = this.types;
-    if (path.parentPath.node.type === "LogicalExpression") {
+    if (path.parentPath.node.type === 'LogicalExpression') {
         return; // already processed
     }
-    let leaves = [];
+    const leaves = [];
     this.findLeaves(path.node, leaves);
-    const b = this.cov.newBranch("binary-expr", path.node.loc);
+    const b = this.cov.newBranch('binary-expr', path.node.loc);
     for (let i = 0; i < leaves.length; i += 1) {
         const leaf = leaves[i];
         const hint = this.hintFor(leaf.node);
@@ -429,7 +476,10 @@ function coverLogicalExpression(path) {
         if (!increment) {
             continue;
         }
-        leaf.parent[leaf.property] = T.sequenceExpression([increment, leaf.node]);
+        leaf.parent[leaf.property] = T.sequenceExpression([
+            increment,
+            leaf.node
+        ]);
     }
 }
 
@@ -437,8 +487,13 @@ const codeVisitor = {
     ArrowFunctionExpression: entries(convertArrowExpression, coverFunction),
     AssignmentPattern: entries(coverAssignmentPattern),
     BlockStatement: entries(), // ignore processing only
+    ExportDefaultDeclaration: entries(), // ignore processing only
+    ExportNamedDeclaration: entries(), // ignore processing only
     ClassMethod: entries(coverFunction),
     ClassDeclaration: entries(parenthesizedExpressionProp('superClass')),
+    ClassProperty: entries(coverClassPropDeclarator),
+    ClassPrivateProperty: entries(coverClassPropDeclarator),
+    ObjectMethod: entries(coverFunction),
     ExpressionStatement: entries(coverStatement),
     BreakStatement: entries(coverStatement),
     ContinueStatement: entries(coverStatement),
@@ -448,10 +503,15 @@ const codeVisitor = {
     TryStatement: entries(coverStatement),
     VariableDeclaration: entries(), // ignore processing only
     VariableDeclarator: entries(coverVariableDeclarator),
-    IfStatement: entries(blockProp('consequent'), blockProp('alternate'), coverStatement, coverIfBranches),
-    ForStatement: entries(blockProp('body'), skipInit, coverStatement),
-    ForInStatement: entries(blockProp('body'), skipInit, coverStatement),
-    ForOfStatement: entries(blockProp('body'), skipInit, coverStatement),
+    IfStatement: entries(
+        blockProp('consequent'),
+        blockProp('alternate'),
+        coverStatement,
+        coverIfBranches
+    ),
+    ForStatement: entries(blockProp('body'), coverStatement),
+    ForInStatement: entries(blockProp('body'), coverStatement),
+    ForOfStatement: entries(blockProp('body'), coverStatement),
     WhileStatement: entries(blockProp('body'), coverStatement),
     DoWhileStatement: entries(blockProp('body'), coverStatement),
     SwitchStatement: entries(createSwitchBranch, coverStatement),
@@ -463,23 +523,43 @@ const codeVisitor = {
     ConditionalExpression: entries(coverTernary),
     LogicalExpression: entries(coverLogicalExpression)
 };
-// the template to insert at the top of the program.
-const coverageTemplate = template(`
-    var COVERAGE_VAR = (function () {
-        var path = PATH,
-            hash = HASH,
-            Function = (function(){}).constructor,
-            global = (new Function('return this'))(),
-            gcv = GLOBAL_COVERAGE_VAR,
-            coverageData = INITIAL,
-            coverage = global[gcv] || (global[gcv] = {});
-        if (coverage[path] && coverage[path].hash === hash) {
-            return coverage[path];
-        }
-        coverageData.hash = hash;
-        return coverage[path] = coverageData;
-    })();
+const globalTemplateAlteredFunction = template(`
+        var Function = (function(){}).constructor;
+        var global = (new Function(GLOBAL_COVERAGE_SCOPE))();
 `);
+const globalTemplateFunction = template(`
+        var global = (new Function(GLOBAL_COVERAGE_SCOPE))();
+`);
+const globalTemplateVariable = template(`
+        var global = GLOBAL_COVERAGE_SCOPE;
+`);
+// the template to insert at the top of the program.
+const coverageTemplate = template(
+    `
+    function COVERAGE_FUNCTION () {
+        var path = PATH;
+        var hash = HASH;
+        GLOBAL_COVERAGE_TEMPLATE
+        var gcv = GLOBAL_COVERAGE_VAR;
+        var coverageData = INITIAL;
+        var coverage = global[gcv] || (global[gcv] = {});
+        if (!coverage[path] || coverage[path].hash !== hash) {
+            coverage[path] = coverageData;
+        }
+
+        var actualCoverage = coverage[path];
+        {
+            // @ts-ignore
+            COVERAGE_FUNCTION = function () {
+                return actualCoverage;
+            }
+        }
+
+        return actualCoverage;
+    }
+`,
+    { preserveComments: true }
+);
 // the rewire plugin (and potentially other babel middleware)
 // may cause files to be instrumented twice, see:
 // https://github.com/istanbuljs/babel-plugin-istanbul/issues/94
@@ -489,8 +569,12 @@ function alreadyInstrumented(path, visitState) {
     return path.scope.hasBinding(visitState.varName);
 }
 function shouldIgnoreFile(programNode) {
-    return programNode.parent && programNode.parent.comments.some(c => COMMENT_FILE_RE.test(c.value));
+    return (
+        programNode.parent &&
+        programNode.parent.comments.some(c => COMMENT_FILE_RE.test(c.value))
+    );
 }
+
 /**
  * programVisitor is a `babel` adaptor for instrumentation.
  * It returns an object with two methods `enter` and `exit`.
@@ -508,12 +592,24 @@ function shouldIgnoreFile(programNode) {
  * @param {string} sourceFilePath - the path to source file
  * @param {Object} opts - additional options
  * @param {string} [opts.coverageVariable=__coverage__] the global coverage variable name.
+ * @param {string} [opts.coverageGlobalScope=this] the global coverage variable scope.
+ * @param {boolean} [opts.coverageGlobalScopeFunc=true] use an evaluated function to find coverageGlobalScope.
+ * @param {Array} [opts.ignoreClassMethods=[]] names of methods to ignore by default on classes.
  * @param {object} [opts.inputSourceMap=undefined] the input source map, that maps the uninstrumented code back to the
  * original code.
  */
-function programVisitor(types, sourceFilePath = 'unknown.js', opts = {coverageVariable: '__coverage__', inputSourceMap: undefined }) {
+function programVisitor(types, sourceFilePath = 'unknown.js', opts = {}) {
     const T = types;
-    const visitState = new VisitState(types, sourceFilePath, opts.inputSourceMap);
+    opts = {
+        ...defaults.instrumentVisitor,
+        ...opts
+    };
+    const visitState = new VisitState(
+        types,
+        sourceFilePath,
+        opts.inputSourceMap,
+        opts.ignoreClassMethods
+    );
     return {
         enter(path) {
             if (shouldIgnoreFile(path.find(p => p.isProgram()))) {
@@ -531,20 +627,53 @@ function programVisitor(types, sourceFilePath = 'unknown.js', opts = {coverageVa
             visitState.cov.freeze();
             const coverageData = visitState.cov.toJSON();
             if (shouldIgnoreFile(path.find(p => p.isProgram()))) {
-                return {fileCoverage: coverageData, sourceMappingURL: visitState.sourceMappingURL};
+                return {
+                    fileCoverage: coverageData,
+                    sourceMappingURL: visitState.sourceMappingURL
+                };
             }
             coverageData[MAGIC_KEY] = MAGIC_VALUE;
-            const hash = createHash(SHA).update(JSON.stringify(coverageData)).digest('hex');
+            const hash = createHash(SHA)
+                .update(JSON.stringify(coverageData))
+                .digest('hex');
+            coverageData.hash = hash;
             const coverageNode = T.valueToNode(coverageData);
             delete coverageData[MAGIC_KEY];
+            delete coverageData.hash;
+            let gvTemplate;
+            if (opts.coverageGlobalScopeFunc) {
+                if (path.scope.getBinding('Function')) {
+                    gvTemplate = globalTemplateAlteredFunction({
+                        GLOBAL_COVERAGE_SCOPE: T.stringLiteral(
+                            'return ' + opts.coverageGlobalScope
+                        )
+                    });
+                } else {
+                    gvTemplate = globalTemplateFunction({
+                        GLOBAL_COVERAGE_SCOPE: T.stringLiteral(
+                            'return ' + opts.coverageGlobalScope
+                        )
+                    });
+                }
+            } else {
+                gvTemplate = globalTemplateVariable({
+                    GLOBAL_COVERAGE_SCOPE: opts.coverageGlobalScope
+                });
+            }
             const cv = coverageTemplate({
                 GLOBAL_COVERAGE_VAR: T.stringLiteral(opts.coverageVariable),
-                COVERAGE_VAR: T.identifier(visitState.varName),
+                GLOBAL_COVERAGE_TEMPLATE: gvTemplate,
+                COVERAGE_FUNCTION: T.identifier(visitState.varName),
                 PATH: T.stringLiteral(sourceFilePath),
                 INITIAL: coverageNode,
                 HASH: T.stringLiteral(hash)
             });
-            cv._blockHoist = 5;
+            // explicitly call this.varName to ensure coverage is always initialized
+            path.node.body.unshift(
+                T.expressionStatement(
+                    T.callExpression(T.identifier(visitState.varName), [])
+                )
+            );
             path.node.body.unshift(cv);
             return {
                 fileCoverage: coverageData,

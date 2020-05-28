@@ -1,3 +1,6 @@
+'use strict';
 module.exports = {
-    baz: function () { return 'baz'; }
+    baz() {
+        return 'baz';
+    }
 };

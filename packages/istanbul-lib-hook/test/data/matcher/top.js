@@ -1,2 +1,4 @@
-module.exports = function () { return 32; };
-
+'use strict';
+module.exports = function() {
+    return 32;
+};
