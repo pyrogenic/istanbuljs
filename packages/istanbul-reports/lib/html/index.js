@@ -5,6 +5,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const handlebars = require('handlebars');
 const html = require('html-escaper');
 const { ReportBase } = require('istanbul-lib-report');
 const annotator = require('./annotator');
@@ -29,7 +30,7 @@ function htmlHead(details) {
     `;
 }
 
-function headerTemplate(details) {
+function defaultHeaderTemplate(details) {
     function metricsTemplate({ pct, covered, total }, kind) {
         return `
             <div class='fl pad1y space-right2'>
@@ -88,7 +89,7 @@ ${htmlHead(details)}
     `;
 }
 
-function footerTemplate(details) {
+function defaultFooterTemplate(details) {
     return `
                 <div class='push'></div><!-- for sticky footer -->
             </div><!-- /wrapper -->
@@ -358,7 +359,7 @@ class HtmlReport extends ReportBase {
 
         this.fillTemplate(node, templateData, context);
         const cw = this.getWriter(context).writeFile(linkMapper.getPath(node));
-        cw.write(headerTemplate(templateData));
+        cw.write(this.headerTemplate(templateData));
         cw.write(summaryTableHeader);
         children.forEach(child => {
             const metrics = child.getCoverageSummary();
@@ -395,7 +396,7 @@ class HtmlReport extends ReportBase {
             cw.write(summaryLineTemplate(data) + '\n');
         });
         cw.write(summaryTableFooter);
-        cw.write(footerTemplate(templateData));
+        cw.write(this.footerTemplate(templateData));
         cw.close();
     }
 
@@ -405,38 +406,34 @@ class HtmlReport extends ReportBase {
 
         this.fillTemplate(node, templateData, context);
         const cw = this.getWriter(context).writeFile(linkMapper.getPath(node));
-        cw.write(headerTemplate(templateData));
+        cw.write(this.headerTemplate(templateData));
         cw.write('<pre><table class="coverage">\n');
         cw.write(detailTemplate(annotator(node.getFileCoverage(), context)));
         cw.write('</table></pre>\n');
-        cw.write(footerTemplate(templateData));
+        cw.write(this.footerTemplate(templateData));
         cw.close();
     }
 
-    templateFor(name) {
+    templateFor(name, defaultTemplate) {
         var file = path.resolve(this.templates, name + '.txt');
-        return handlebars.compile(
-        fs.readFileSync(file, 'utf8')
-        );
+        if (!fs.existsSync(file)) {
+            return defaultTemplate;
+        }
+        return handlebars.compile(fs.readFileSync(file, 'utf8'));
+    }
+
+    get headerTemplate() {
+        if (this.headerTemplateValue !== undefined) {
+            return this.headerTemplateValue;
+        }
+        return (this.headerTemplateValue = this.templateFor('head', defaultHeaderTemplate));
+      }
+
+    get footerTemplate() {
+        if (this.footerTemplateValue !== undefined) {
+        return this.footerTemplateValue;
+        }
+        return (this.footerTemplateValue = this.templateFor('foot', defaultFooterTemplate));
     }
 }
-
-Object.defineProperty(HtmlReport.prototype, "headerTemplate", {
-  get: function () {
-    if (this.headerTemplateValue !== undefined) {
-      return this.headerTemplateValue;
-    }
-    return (this.headerTemplateValue = this.templateFor('head'));
-  }
-});
-
-Object.defineProperty(HtmlReport.prototype, "footerTemplate", {
-  get: function () {
-    if (this.footerTemplateValue !== undefined) {
-      return this.footerTemplateValue;
-    }
-    return (this.footerTemplateValue = this.templateFor('foot'));
-  }
-});
-
 module.exports = HtmlReport;
