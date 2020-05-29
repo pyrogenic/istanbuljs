@@ -1,56 +1,66 @@
+'use strict';
 /* globals describe, it */
 
-var assert = require('chai').assert,
-    context = require('../lib/context');
+const assert = require('chai').assert;
+const { createContext } = require('..');
+const Context = require('../lib/context');
+const coverageMap = require('./helpers/coverage-map');
 
-describe('context', function() {
-    it('provides a writer when not specified', function () {
-        var ctx = context.create(),
-            w = ctx.writer;
+const optsEmptyCoverage = {
+    coverageMap: coverageMap.empty
+};
+
+describe('context', () => {
+    it('provides a writer when not specified', () => {
+        const ctx = createContext(optsEmptyCoverage);
+        const w = ctx.writer;
 
         assert.ok(w);
         assert.ok(w === ctx.writer);
         assert.ok(w === ctx.getWriter());
     });
-    it('returns an XML writer', function () {
-        var ctx = context.create(),
-            w = ctx.writer,
-            cw = w.writeFile(null);
+    it('returns an XML writer', () => {
+        const ctx = new Context(optsEmptyCoverage);
+        const w = ctx.writer;
+        const cw = w.writeFile(null);
         assert.ok(ctx.getXMLWriter(cw));
     });
-    it('returns source text by default', function () {
-        var ctx = context.create(),
-            file = __filename;
+    it('returns source text by default', () => {
+        const ctx = new Context(optsEmptyCoverage);
+        const file = __filename;
         assert.ok(ctx.getSource(file));
     });
-    it('throws when source file not found', function () {
-        var ctx = context.create(),
-            file = __filename;
-        assert.throws(ctx.getSource.bind(ctx, file + ".xxx"));
+    it('throws when source file not found', () => {
+        const ctx = new Context(optsEmptyCoverage);
+        const file = __filename;
+        assert.throws(ctx.getSource.bind(ctx, file + '.xxx'));
     });
-    it('provides the correct classes for default watermarks', function () {
-        var ctx = context.create();
+    it('provides the correct classes for default watermarks', () => {
+        const ctx = new Context(optsEmptyCoverage);
         assert.equal(ctx.classForPercent('statements', 49), 'low');
         assert.equal(ctx.classForPercent('branches', 50), 'medium');
         assert.equal(ctx.classForPercent('functions', 80), 'high');
         assert.equal(ctx.classForPercent('lines', 85), 'high');
         assert.equal(ctx.classForPercent('xlines', 85), 'unknown');
     });
-    it('allows watermark overrides', function () {
-        var w = {
+    it('allows watermark overrides', () => {
+        const watermarks = {
             statements: {},
-            branches: [ 10 ],
+            branches: [10],
             lines: [90, 95]
-        },
-            ctx = context.create({watermarks: w});
+        };
+        const ctx = new Context({
+            watermarks,
+            coverageMap: coverageMap.empty
+        });
         assert.equal(ctx.classForPercent('statements', 49), 'low');
         assert.equal(ctx.classForPercent('branches', 50), 'medium');
         assert.equal(ctx.classForPercent('functions', 80), 'high');
         assert.equal(ctx.classForPercent('lines', 85), 'low');
     });
-    it('returns a visitor', function () {
-        var ctx = context.create(),
-            visitor = ctx.getVisitor({});
+    it('returns a visitor', () => {
+        const ctx = new Context(optsEmptyCoverage);
+        const visitor = ctx.getVisitor({});
         assert.ok(typeof visitor.onStart === 'function');
     });
 });

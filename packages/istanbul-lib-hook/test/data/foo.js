@@ -1,4 +1,6 @@
+'use strict';
 module.exports = {
-    foo: function () { return 'foo'; }
+    foo() {
+        return 'foo';
+    }
 };
-

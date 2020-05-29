@@ -2,24 +2,11 @@
  Copyright 2012-2015, Yahoo Inc.
  Copyrights licensed under the New BSD License. See the accompanying LICENSE file for terms.
  */
-import * as babylon from 'babylon';
-import * as t from 'babel-types';
-import traverse from 'babel-traverse';
-import generate from 'babel-generator';
+import { transformSync } from '@babel/core';
+import { defaults } from '@istanbuljs/schema';
 import programVisitor from './visitor';
+import readInitialCoverage from './read-coverage';
 
-function defaultOpts() {
-    return {
-        coverageVariable: "__coverage__",
-        preserveComments: false,
-        compact: true,
-        esModules: false,
-        autoWrap: false,
-        produceSourceMap: false,
-        sourceMapUrlCallback: null,
-        debug: false
-    };
-}
 /**
  * Instrumenter is the public API for the instrument library.
  * It is typically used for ES5 code. For ES6 code that you
@@ -32,32 +19,20 @@ function defaultOpts() {
  * @param {boolean} [opts.esModules=false] set to true to instrument ES6 modules.
  * @param {boolean} [opts.autoWrap=false] set to true to allow `return` statements outside of functions.
  * @param {boolean} [opts.produceSourceMap=false] set to true to produce a source map for the instrumented code.
+ * @param {Array} [opts.ignoreClassMethods=[]] set to array of class method names to ignore for coverage.
  * @param {Function} [opts.sourceMapUrlCallback=null] a callback function that is called when a source map URL
  *     is found in the original code. This function is called with the source file name and the source map URL.
  * @param {boolean} [opts.debug=false] - turn debugging on
+ * @param {array} [opts.parserPlugins] - set babel parser plugins, see @istanbuljs/schema for defaults.
  */
 class Instrumenter {
-    constructor(opts=defaultOpts()) {
-        this.opts = this.normalizeOpts(opts);
+    constructor(opts = {}) {
+        this.opts = {
+            ...defaults.instrumenter,
+            ...opts
+        };
         this.fileCoverage = null;
         this.sourceMap = null;
-    }
-    /**
-     * normalize options passed in and assign defaults.
-     * @param opts
-     * @private
-     */
-    normalizeOpts(opts) {
-        const normalize = (name, defaultValue) => {
-            if (!opts.hasOwnProperty(name)) {
-                opts[name] = defaultValue;
-            }
-        };
-        const defOpts = defaultOpts();
-        Object.keys(defOpts).forEach(function (k) {
-            normalize(k, defOpts[k]);
-        });
-        return opts;
     }
     /**
      * instrument the supplied code and track coverage against the supplied
@@ -77,46 +52,67 @@ class Instrumenter {
             throw new Error('Code must be a string');
         }
         filename = filename || String(new Date().getTime()) + '.js';
-        const opts = this.opts;
-        const ast = babylon.parse(code, {
-            allowReturnOutsideFunction: opts.autoWrap,
-            sourceType: opts.esModules ? "module" : "script",
-            plugins: [
-              'asyncGenerators',
-              'dynamicImport',
-              'objectRestSpread',
-              'flow',
-              'jsx'
-            ]
-        });
-        const ee = programVisitor(t, filename, {
-            coverageVariable: opts.coverageVariable,
-            inputSourceMap: inputSourceMap
-        });
+        const { opts } = this;
         let output = {};
-        const visitor = {
-            Program: {
-                enter: ee.enter,
-                exit: function (path) {
-                    output = ee.exit(path);
-                }
-            }
-        };
-        traverse(ast, visitor);
-
-        const generateOptions = {
+        const babelOpts = {
+            configFile: false,
+            babelrc: false,
+            ast: true,
+            filename: filename || String(new Date().getTime()) + '.js',
+            inputSourceMap,
+            sourceMaps: opts.produceSourceMap,
             compact: opts.compact,
             comments: opts.preserveComments,
-            sourceMaps: opts.produceSourceMap,
-            sourceFileName: filename
+            parserOpts: {
+                allowReturnOutsideFunction: opts.autoWrap,
+                sourceType: opts.esModules ? 'module' : 'script',
+                plugins: opts.parserPlugins
+            },
+            plugins: [
+                [
+                    ({ types }) => {
+                        const ee = programVisitor(types, filename, {
+                            coverageVariable: opts.coverageVariable,
+                            coverageGlobalScope: opts.coverageGlobalScope,
+                            coverageGlobalScopeFunc:
+                                opts.coverageGlobalScopeFunc,
+                            ignoreClassMethods: opts.ignoreClassMethods,
+                            inputSourceMap
+                        });
+
+                        return {
+                            visitor: {
+                                Program: {
+                                    enter: ee.enter,
+                                    exit(path) {
+                                        output = ee.exit(path);
+                                    }
+                                }
+                            }
+                        };
+                    }
+                ]
+            ]
         };
-        const codeMap = generate(ast, generateOptions, code);
+
+        const codeMap = transformSync(code, babelOpts);
+
+        if (!output || !output.fileCoverage) {
+            const initialCoverage =
+                readInitialCoverage(codeMap.ast) ||
+                /* istanbul ignore next: paranoid check */ {};
+            this.fileCoverage = initialCoverage.coverageData;
+            this.sourceMap = inputSourceMap;
+            return code;
+        }
+
         this.fileCoverage = output.fileCoverage;
         this.sourceMap = codeMap.map;
         const cb = this.opts.sourceMapUrlCallback;
         if (cb && output.sourceMappingURL) {
             cb(filename, output.sourceMappingURL);
         }
+
         return codeMap.code;
     }
     /**
@@ -137,7 +133,7 @@ class Instrumenter {
             filename = null;
         }
         try {
-            var out = this.instrumentSync(code, filename, inputSourceMap);
+            const out = this.instrumentSync(code, filename, inputSourceMap);
             callback(null, out);
         } catch (ex) {
             callback(ex);

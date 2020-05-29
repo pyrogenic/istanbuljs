@@ -1,35 +1,50 @@
+import { parseSync, traverse } from '@babel/core';
+import { defaults } from '@istanbuljs/schema';
 import { MAGIC_KEY, MAGIC_VALUE } from './constants';
-import { parse } from 'babylon';
-import traverse from 'babel-traverse';
-import * as t from 'babel-types';
 
-export default function readInitialCoverage (code) {
+function getAst(code) {
+    if (typeof code === 'object' && typeof code.type === 'string') {
+        // Assume code is already a babel ast.
+        return code;
+    }
+
     if (typeof code !== 'string') {
         throw new Error('Code must be a string');
     }
 
     // Parse as leniently as possible
-    const ast = parse(code, {
-        allowImportExportEverywhere: true,
-        allowReturnOutsideFunction: true,
-        allowSuperOutsideMethod: true,
-        sourceType: "script", // I think ?
-        plugins: ["*"]
+    return parseSync(code, {
+        babelrc: false,
+        configFile: false,
+        parserOpts: {
+            allowImportExportEverywhere: true,
+            allowReturnOutsideFunction: true,
+            allowSuperOutsideMethod: true,
+            sourceType: 'script',
+            plugins: defaults.instrumenter.parserPlugins
+        }
     });
+}
+
+export default function readInitialCoverage(code) {
+    const ast = getAst(code);
 
     let covScope;
     traverse(ast, {
-        ObjectProperty: function (path) {
+        ObjectProperty(path) {
             const { node } = path;
-            if (!node.computed &&
-                t.isIdentifier(node.key) &&
-                node.key.name === MAGIC_KEY)
-            {
+            if (
+                !node.computed &&
+                path.get('key').isIdentifier() &&
+                node.key.name === MAGIC_KEY
+            ) {
                 const magicValue = path.get('value').evaluate();
                 if (!magicValue.confident || magicValue.value !== MAGIC_VALUE) {
                     return;
                 }
-                covScope = path.scope.getFunctionParent() || path.scope.getProgramParent();
+                covScope =
+                    path.scope.getFunctionParent() ||
+                    path.scope.getProgramParent();
                 path.stop();
             }
         }
@@ -55,6 +70,7 @@ export default function readInitialCoverage (code) {
     }
 
     delete result.coverageData[MAGIC_KEY];
-    
+    delete result.coverageData.hash;
+
     return result;
 }

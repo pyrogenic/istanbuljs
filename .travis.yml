@@ -1,16 +1,24 @@
-sudo: false
 language: node_js
+os:
+    - windows
+    - osx
+    - linux
 node_js:
-  - 4
-  - 6
-  - 8
-  - 'stable'
+    - 'node'
+    - 10
+    - 8
+matrix:
+    ## An ENOMEM error occurs with 11.x.x under Travis-CI for Windows.
+    ## Disable until https://github.com/nodejs/node/issues/25484 is resolved.
+    #  include:
+    #    - os: windows
+    #      node_js: "latest"
+    exclude:
+        - os: windows
+          node_js: 'node'
 
 env:
-  global:
-    COVERALLS_PARALLEL: true
-
-before_install:
-  - npm cache clear --force
+    global:
+        COVERALLS_PARALLEL: true
 
 after_success: nyc report --reporter=text-lcov | coveralls

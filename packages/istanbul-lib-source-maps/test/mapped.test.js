@@ -1,10 +1,11 @@
+'use strict';
 /* globals describe, it */
-var assert = require('chai').assert,
-    MappedCoverage = require('../lib/mapped').MappedCoverage;
+const assert = require('chai').assert;
+const MappedCoverage = require('../lib/mapped').MappedCoverage;
 
-describe('mapped coverage', function () {
-    it('allows a path constructor, has all properties', function () {
-        var fc = new MappedCoverage('/path/to/file');
+describe('mapped coverage', () => {
+    it('allows a path constructor, has all properties', () => {
+        const fc = new MappedCoverage('/path/to/file');
         assert.ok(fc.statementMap);
         assert.ok(fc.fnMap);
         assert.ok(fc.branchMap);
@@ -14,17 +15,16 @@ describe('mapped coverage', function () {
         assert.ok(fc.getLineCoverage());
     });
 
-    it('allows building object incrementally, resolving dups', function () {
-        var mc = new MappedCoverage('/path/to/file'),
-            loc = function (sl, sc, el, ec) {
-                return {
-                    start: { line: sl, column: sc },
-                    end: { line: el, column: ec }
-                };
-            },
-            index,
-            index2,
-            sc;
+    it('allows building object incrementally, resolving dups', () => {
+        const mc = new MappedCoverage('/path/to/file');
+        const loc = function(sl, sc, el, ec) {
+            return {
+                start: { line: sl, column: sc },
+                end: { line: el, column: ec }
+            };
+        };
+        let index;
+        let index2;
 
         index = mc.addStatement(loc(1, 0, 1, 100), 1);
         assert.strictEqual(index, 0);
@@ -46,20 +46,35 @@ describe('mapped coverage', function () {
         assert.equal(index, index2);
         assert.equal(mc.fnMap[index].name, 'foo');
 
-        index = mc.addFunction(undefined, loc(1, 0, 1, 60), loc(1, 0, 1, 80), 0);
+        index = mc.addFunction(
+            undefined,
+            loc(1, 0, 1, 60),
+            loc(1, 0, 1, 80),
+            0
+        );
         assert.ok(index);
-        assert.equal(mc.fnMap[index].name,'(unknown_' + index + ')');
+        assert.equal(mc.fnMap[index].name, '(unknown_' + index + ')');
 
-        index = mc.addBranch('if', loc(1, 15, 1, 20), [loc(1, 15, 1, 20), loc(1, 21, 1, 40)], [1,0]);
+        index = mc.addBranch(
+            'if',
+            loc(1, 15, 1, 20),
+            [loc(1, 15, 1, 20), loc(1, 21, 1, 40)],
+            [1, 0]
+        );
         assert.strictEqual(index, 0);
         assert.deepEqual(mc.branchMap[index].loc, loc(1, 15, 1, 20));
         assert.deepEqual(mc.branchMap[index].locations[0], loc(1, 15, 1, 20));
         assert.deepEqual(mc.branchMap[index].locations[1], loc(1, 21, 1, 40));
 
-        index2 = mc.addBranch('if', loc(1, 15, 1, 20), [loc(1, 15, 1, 20), loc(1, 21, 1, 40)], [0,1]);
+        index2 = mc.addBranch(
+            'if',
+            loc(1, 15, 1, 20),
+            [loc(1, 15, 1, 20), loc(1, 21, 1, 40)],
+            [0, 1]
+        );
         assert.equal(index, index2);
 
-        sc = mc.toSummary();
+        const sc = mc.toSummary();
         assert.equal(50, sc.statements.pct);
         assert.equal(50, sc.functions.pct);
         assert.equal(100, sc.branches.pct);
